@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Energy Forecasting System</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body { font-family: Arial, sans-serif; background: linear-gradient(to bottom, #e0f7e0, #ffffff); margin:0; }
+h1,h2,h3 { text-align:center; color:#2e7d32; }
+.box { background:white; max-width:400px; margin:auto; margin-top:30px; padding:20px; border-radius:10px; box-shadow:0 0 12px #a5d6a7; }
+input, select { width:90%; padding:10px; margin:8px 0; border-radius:6px; border:1px solid #999; font-size:16px; }
+button { background:#2e7d32; color:white; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; font-size:16px; margin-top:10px; }
+button:hover { background:#1b5e20; }
+#dashboard { display:none; max-width:900px; margin:auto; padding:20px; }
+#forecastChart { background:white; padding:10px; border-radius:10px; box-shadow:0 0 10px #a5d6a7; }
+#flowchart { margin-top:30px; text-align:center; display:flex; flex-direction:column; align-items:center; }
+.flow-step { display:flex; flex-direction:column; align-items:center; margin:10px; padding:10px 15px; background:#c8e6c9; border-radius:8px; box-shadow:0 0 5px #81c784; width:220px; opacity:0; transition: opacity 1s ease; }
+.flow-step.visible { opacity:1; }
+.arrow { font-size:24px; color:#2e7d32; opacity:0; transition: opacity 1s ease; }
+.arrow.visible { opacity:1; }
+#weatherBox { background:#dcedc8; padding:10px; border-radius:8px; margin:20px auto; width:250px; text-align:center; }
+table { width:100%; border-collapse:collapse; margin-top:20px; }
+th, td { border:1px solid #81c784; padding:8px; text-align:center; }
+#alertsBox { background:#fff3e0; color:#e65100; padding:10px; margin:20px auto; max-width:400px; border-radius:8px; text-align:center; }
+#exportButtons { text-align:center; margin-top:15px; }
+</style>
+</head>
+<body>
+
+<h1>🌱 Energy Forecasting System</h1>
+
+<div id="loginBox" class="box">
+<h2>Login</h2>
+<input id="loginUser" placeholder="Username">
+<input id="loginPass" type="password" placeholder="Password">
+<button onclick="login()">Login</button>
+<p>New user? <a href="#" onclick="showSignup()">Sign up</a></p>
+<p id="loginError" style="color:red;"></p>
+</div>
+
+<div id="signupBox" class="box" style="display:none;">
+<h2>Sign Up</h2>
+<input id="newUser" placeholder="Create username">
+<input id="newPass" type="password" placeholder="Create password">
+<button onclick="signup()">Register</button>
+<p id="signupError" style="color:red;"></p>
+</div>
+
+<div id="surveyBox" class="box" style="display:none;">
+<h2>Energy Usage Survey</h2>
+<label>Energy Usage Type</label>
+<select id="usageType">
+<option>Industry/Factory</option>
+<option>Community</option>
+<option>Household</option>
+</select>
+<label>Hours of Energy Usage per Day</label>
+<input id="hoursInput" placeholder="Enter hours" oninput="updateForecast()">
+<label>Do you have a solar panel?</label>
+<select id="solarSelect">
+<option>Yes</option>
+<option>No</option>
+</select>
+<button onclick="saveSurvey()">Submit</button>
+<p id="surveyError" style="color:red;"></p>
+</div>
+
+<div id="dashboard">
+<h2 id="userWelcome"></h2>
+<div id="weatherBox">
+<h3>Weather Forecast</h3>
+<p id="weatherData">Loading...</p>
+</div>
+<div id="alertsBox"></div>
+<canvas id="forecastChart" width="800" height="400"></canvas>
+<div id="exportButtons">
+<button onclick="downloadCSV()">Download CSV</button>
+<button onclick="downloadChart()">Save Chart as PNG</button>
+</div>
+<h3>Weekly Energy Analysis</h3>
+<table>
+<thead>
+<tr><th>Day</th><th>Past Usage (kWh)</th><th>Predicted Usage (kWh)</th></tr>
+</thead>
+<tbody id="weeklyTable"></tbody>
+</table>
+
+<div id="flowchart">
+<div class="flow-step">📥 Data Collection</div>
+<div class="arrow">↓</div>
+<div class="flow-step">🧹 Preprocessing</div>
+<div class="arrow">↓</div>
+<div class="flow-step">🤖 ML Model</div>
+<div class="arrow">↓</div>
+<div class="flow-step">📊 Forecast Dashboard</div>
+</div>
+</div>
+
+<script>
+function showSignup(){
+document.getElementById("loginBox").style.display="none";
+document.getElementById("signupBox").style.display="block";
+}
+function signup(){
+let username=document.getElementById("newUser").value.trim();
+let password=document.getElementById("newPass").value.trim();
+let error=document.getElementById("signupError");
+if(!username||!password){ error.textContent="Please fill all fields."; return; }
+let users=JSON.parse(localStorage.getItem("efs_users")||"{}");
+if(username in users){ error.textContent="Username already exists."; return; }
+users[username]={password};
+localStorage.setItem("efs_users", JSON.stringify(users));
+alert("Signup successful! Please login.");
+document.getElementById("signupBox").style.display="none";
+document.getElementById("loginBox").style.display="block";
+}
+function login(){
+let username=document.getElementById("loginUser").value.trim();
+let password=document.getElementById("loginPass").value.trim();
+let error=document.getElementById("loginError");
+let users=JSON.parse(localStorage.getItem("efs_users")||"{}");
+if(username in users && users[username].password===password){
+localStorage.setItem("loggedUser", username);
+document.getElementById("loginBox").style.display="none";
+document.getElementById("surveyBox").style.display="block";
+} else { error.textContent="Invalid login details."; }
+}
+
+let chart, weeklyData, surveyData;
+async function saveSurvey(){
+let hours=document.getElementById("hoursInput").value.trim();
+let error=document.getElementById("surveyError");
+if(isNaN(hours)||hours===""||Number(hours)<=0){ error.textContent="Invalid input."; return; }
+surveyData={
+usageType: document.getElementById("usageType").value,
+hours: Number(hours),
+solar: document.getElementById("solarSelect").value
+};
+localStorage.setItem("efs_survey", JSON.stringify(surveyData));
+document.getElementById("surveyBox").style.display="none";
+showDashboard();
+}
+
+async function showDashboard(){
+document.getElementById("dashboard").style.display="block";
+let user=localStorage.getItem("loggedUser");
+document.getElementById("userWelcome").textContent="Welcome, "+user+"!";
+let survey=surveyData || JSON.parse(localStorage.getItem("efs_survey"));
+
+try{
+let res=await fetch('https://api.open-meteo.com/v1/forecast?latitude=12.97&longitude=77.59&daily=precipitation_probability_max,sunrise,sunset&timezone=Asia/Kolkata');
+let data=await res.json();
+let sunrise=new Date(data.daily.sunrise[0]);
+let sunset=new Date(data.daily.sunset[0]);
+let sunHours=((sunset-sunrise)/3600000).toFixed(1);
+let rain=data.daily.precipitation_probability_max[0];
+document.getElementById("weatherData").textContent=`Sunlight: ${sunHours}h | Rain: ${rain}%`;
+}catch(err){ document.getElementById("weatherData").textContent="Weather unavailable"; }
+
+generateForecast();
+animateFlowchart();
+}
+
+function generateForecast(){
+let survey=surveyData;
+let days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+let past=[],predicted=[];
+let base=survey.hours;
+for(let i=0;i<7;i++){
+let noise=(Math.random()-0.5)*0.2;
+let pastVal=base*(1+noise);
+past.push(pastVal);
+let predNoise=Math.random()*0.3;
+predicted.push(pastVal*(1+predNoise));
+base=pastVal;
+}
+weeklyData={days,past,predicted};
+updateChart();
+updateTable();
+updateAlerts();
+}
+
+function updateForecast(){
+let val=document.getElementById("hoursInput").value.trim();
+if(isNaN(val)||val===""||Number(val)<=0) return;
+surveyData.hours=Number(val);
+generateForecast();
+}
+
+function updateChart(){
+const ctx=document.getElementById("forecastChart").getContext('2d');
+if(chart) chart.destroy();
+chart=new Chart(ctx,{
+type:'line',
+data:{ labels:weeklyData.days, datasets:[
+{label:"Past Usage (kWh)", data:weeklyData.past, borderColor:"blue", fill:false, tension:0.3, pointBackgroundColor: weeklyData.past.map((v,i)=>weeklyData.predicted[i]===Math.max(...weeklyData.predicted)?"orange":"blue")},
+{label:"Predicted Usage (kWh)", data:weeklyData.predicted, borderColor:"red", fill:false, tension:0.3, pointBackgroundColor: weeklyData.predicted.map(v=>v===Math.max(...weeklyData.predicted)?"orange":"red")}
+]},
+options:{ responsive:true, plugins:{ legend:{position:'top'}}, animation:{duration:1000} }
+});
+}
+
+function updateTable(){
+let tbody=document.getElementById("weeklyTable"); tbody.innerHTML="";
+for(let i=0;i<7;i++){
+tbody.innerHTML+=`<tr><td>${weeklyData.days[i]}</td><td>${weeklyData.past[i].toFixed(2)}</td><td>${weeklyData.predicted[i].toFixed(2)}</td></tr>`;
+}
+}
+
+function updateAlerts(){
+let maxPred=Math.max(...weeklyData.predicted);
+let alertBox=document.getElementById("alertsBox");
+if(maxPred>surveyData.hours*1.25){ alertBox.innerHTML="⚠️ High predicted energy usage! Consider solar panels or reducing load."; }
+else { alertBox.innerHTML="✅ Energy usage within normal range."; }
+}
+
+function animateFlowchart(){
+let steps=document.querySelectorAll(".flow-step");
+let arrows=document.querySelectorAll(".arrow");
+steps.forEach(s=>s.classList.remove("visible"));
+arrows.forEach(a=>a.classList.remove("visible"));
+steps.forEach((s,i)=>{
+setTimeout(()=>{ s.classList.add("visible"); if(arrows[i]) arrows[i].classList.add("visible"); }, i*700);
+});
+}
+
+function downloadCSV(){
+let csv="Day,Past Usage,Predicted Usage\n";
+for(let i=0;i<weeklyData.days.length;i++){
+csv+=`${weeklyData.days[i]},${weeklyData.past[i].toFixed(2)},${weeklyData.predicted[i].toFixed(2)}\n`;
+}
+let blob=new Blob([csv],{type:"text/csv"});
+let url=URL.createObjectURL(blob);
+let a=document.createElement("a");
+a.href=url; a.download="weekly_energy.csv"; a.click();
+}
+
+function downloadChart(){
+let link=document.createElement("a");
+link.href=chart.toBase64Image();
+link.download="forecast_chart.png";
+link.click();
+}
+</script>
+</body>
+</html>
